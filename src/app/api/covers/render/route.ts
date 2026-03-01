@@ -11,6 +11,7 @@ import { checkRateLimit } from "@/lib/rate-limit"
  * 1. 使用浏览器实例复用池（不再每次 launch/close 完整浏览器）
  * 2. 服务器 URL 从环境变量读取，不再硬编码
  * 3. 添加速率限制，防止并发滥用
+ * 4. 保存到 /tmp/covers/（Railway standalone 模式下 public 目录不可写）
  */
 export async function POST(req: NextRequest) {
   // 速率限制：每分钟最多 60 次渲染请求
@@ -28,8 +29,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "缺少封面数据" }, { status: 400 })
     }
 
-    // 确保目录存在
-    const coversDir = path.join(process.cwd(), "public", "covers")
+    // 确保 /tmp/covers 目录存在（/tmp 在 Railway 容器中可写）
+    const coversDir = path.join("/tmp", "covers")
     await mkdir(coversDir, { recursive: true })
 
     const safeFilename = (filename || `cover_${Date.now()}`)
@@ -68,7 +69,8 @@ export async function POST(req: NextRequest) {
       }
     })
 
-    const webUrl = `/covers/${fullFilename}`
+    // 返回 API 路由 URL（而非静态文件 URL）
+    const webUrl = `/api/covers/${fullFilename}`
     return NextResponse.json({ url: webUrl, filename: fullFilename })
   } catch (error: any) {
     console.error("封面图渲染失败:", error)

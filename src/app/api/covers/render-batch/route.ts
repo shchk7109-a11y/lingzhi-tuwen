@@ -15,6 +15,8 @@ import { checkRateLimit } from "@/lib/rate-limit"
  *   items: Array<{ coverData: object, filename: string }>,
  *   baseUrl?: string
  * }
+ *
+ * 注意：保存到 /tmp/covers/（Railway standalone 模式下 public 目录不可写）
  */
 export async function POST(req: NextRequest) {
   const ip = req.headers.get("x-forwarded-for") || "unknown"
@@ -37,7 +39,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "单次批量渲染最多 30 张" }, { status: 400 })
     }
 
-    const coversDir = path.join(process.cwd(), "public", "covers")
+    // 使用 /tmp/covers/（Railway 容器中 /tmp 可写）
+    const coversDir = path.join("/tmp", "covers")
     await mkdir(coversDir, { recursive: true })
 
     const host =
@@ -76,7 +79,8 @@ export async function POST(req: NextRequest) {
           }
         })
 
-        return { filename: fullFilename, url: `/covers/${fullFilename}` }
+        // 返回 API 路由 URL（而非静态文件 URL）
+        return { filename: fullFilename, url: `/api/covers/${fullFilename}` }
       })
     )
 

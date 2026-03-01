@@ -3,7 +3,8 @@ import { writeFile, mkdir } from "fs/promises"
 import path from "path"
 
 // POST /api/covers/save
-// 接收 base64 图片数据，保存到服务器，返回可访问的 URL
+// 接收 base64 图片数据，保存到 /tmp/covers/，返回可访问的 URL
+// 注意：Railway standalone 模式下 public 目录不可写，改用 /tmp + API 路由提供文件服务
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json()
@@ -17,8 +18,8 @@ export async function POST(req: NextRequest) {
     const base64Data = imageData.replace(/^data:image\/\w+;base64,/, "")
     const buffer = Buffer.from(base64Data, "base64")
 
-    // 确保目录存在
-    const coversDir = path.join(process.cwd(), "public", "covers")
+    // 确保 /tmp/covers 目录存在（/tmp 在 Railway 容器中可写）
+    const coversDir = path.join("/tmp", "covers")
     await mkdir(coversDir, { recursive: true })
 
     // 生成文件名
@@ -31,7 +32,8 @@ export async function POST(req: NextRequest) {
     // 写入文件
     await writeFile(filePath, buffer)
 
-    const webUrl = `/covers/${fullFilename}`
+    // 返回 API 路由 URL（而非静态文件 URL）
+    const webUrl = `/api/covers/${fullFilename}`
     return NextResponse.json({ url: webUrl, filename: fullFilename })
   } catch (error: any) {
     console.error("封面图保存失败:", error)

@@ -1,0 +1,90 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Customer {
+  id          String   @id @default(cuid())
+  name        String
+  nickname    String?
+  gender      String?
+  age         Int?
+  occupation  String?
+  city        String?
+  income      String?
+  category    String   @default("职场精英型")
+  lifestyle   String?
+  painPoints  String?
+  needs       String?
+  scenes      String?
+  language    String?
+  xhsAccount    String?
+  wechatAccount String?
+  wechatId      String?
+  status      String   @default("active")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  contents    Content[]
+}
+
+model Material {
+  id          String   @id @default(cuid())
+  filename    String
+  filepath    String
+  webPath     String
+  productLine String
+  productName String
+  sceneType   String   @default("场景图")
+  tags        String?
+  isFormula   Boolean  @default(false)
+  isProduct   Boolean  @default(false)
+  status      String   @default("active")
+  createdAt   DateTime @default(now())
+}
+
+model Prompt {
+  id          String   @id @default(cuid())
+  key         String   @unique
+  name        String
+  description String?
+  content     String
+  category    String   @default("general")
+  updatedAt   DateTime @updatedAt
+}
+
+model Setting {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  value     String
+  updatedAt DateTime @updatedAt
+}
+
+model Content {
+  id              String   @id @default(cuid())
+  customerId      String
+  customer        Customer @relation(fields: [customerId], references: [id])
+  originalText    String
+  cleanedText     String?
+  coverData       String?
+  coverUrl        String?
+  title           String?
+  subtitle        String?
+  productName     String?
+  productSlogan   String?
+  coverStyle      String?
+  matchedImage2   String?
+  matchedImage3   String?
+  image2Url       String?
+  image3Url       String?
+  image4Url       String?
+  platform        String   @default("xhs")
+  tags            String?
+  xhsAccount      String?
+  status          String   @default("pending")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}

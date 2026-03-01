@@ -253,7 +253,10 @@ export default function Home() {
       })
       if (res.ok) {
         const data = await res.json()
-        const url = data.url || ""
+        // 将相对路径转换为完整绝对 URL，确保外部系统可以直接访问
+        const relUrl = data.url || ""
+        const origin = typeof window !== "undefined" ? window.location.origin : ""
+        const url = relUrl.startsWith("http") ? relUrl : `${origin}${relUrl}`
         setCurrentBatch(prev => prev.map((c, idx) =>
           idx === index ? { ...c, coverUrl: url, coverRendering: false } : c
         ))

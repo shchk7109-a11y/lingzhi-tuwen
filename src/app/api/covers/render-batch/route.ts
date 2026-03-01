@@ -17,6 +17,7 @@ import { checkRateLimit } from "@/lib/rate-limit"
  * }
  *
  * 注意：保存到 /tmp/covers/（Railway standalone 模式下 public 目录不可写）
+ * 始终使用 localhost:3000 内部访问（避免外网延迟和 networkidle 超时）
  */
 export async function POST(req: NextRequest) {
   const ip = req.headers.get("x-forwarded-for") || "unknown"
@@ -27,7 +28,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json()
-    const { items, baseUrl } = body as {
+    const { items } = body as {
       items: Array<{ coverData: object; filename: string }>
       baseUrl?: string
     }
@@ -43,11 +44,8 @@ export async function POST(req: NextRequest) {
     const coversDir = path.join("/tmp", "covers")
     await mkdir(coversDir, { recursive: true })
 
-    const host =
-      baseUrl ||
-      process.env.NEXT_PUBLIC_APP_URL ||
-      process.env.APP_URL ||
-      "http://localhost:3000"
+    // 始终使用 localhost:3000 内部访问
+    const internalHost = "http://localhost:3000"
 
     // 并行渲染所有封面（浏览器池内部通过信号量控制最大并发数）
     const results = await Promise.allSettled(
@@ -58,15 +56,15 @@ export async function POST(req: NextRequest) {
         const fullFilename = `${safeFilename}.png`
         const filePath = path.join(coversDir, fullFilename)
 
-        const coverPageUrl = `${host}/cover-render?data=${encodeURIComponent(
+        const coverPageUrl = `${internalHost}/cover-render?data=${encodeURIComponent(
           JSON.stringify(coverData)
         )}`
 
         await withBrowserPage(async (page) => {
           await page.setViewport({ width: 375, height: 600, deviceScaleFactor: 2 })
-          await page.goto(coverPageUrl, { waitUntil: "networkidle0", timeout: 30000 })
-          await page.waitForSelector("#cover-root", { timeout: 10000 })
-          await new Promise((r) => setTimeout(r, 300))
+          await page.goto(coverPageUrl, { waitUntil: "load", timeout: 60000 })
+          await page.waitForSelector("#cover-root", { timeout: 15000 })
+          await new Promise((r) => setTimeout(r, 800))
 
           const element = await page.$("#cover-root")
           if (element) {

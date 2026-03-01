@@ -9,7 +9,7 @@ import { checkRateLimit } from "@/lib/rate-limit"
  *
  * 优化点：
  * 1. 使用浏览器实例复用池（不再每次 launch/close 完整浏览器）
- * 2. 服务器 URL 从环境变量读取，不再硬编码
+ * 2. 内部使用 localhost:3000 访问（避免外网延迟和 networkidle 超时）
  * 3. 添加速率限制，防止并发滥用
  * 4. 保存到 /tmp/covers/（Railway standalone 模式下 public 目录不可写）
  */
@@ -23,7 +23,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json()
-    const { coverData, filename, baseUrl } = body
+    const { coverData, filename } = body
 
     if (!coverData) {
       return NextResponse.json({ error: "缺少封面数据" }, { status: 400 })
@@ -39,23 +39,19 @@ export async function POST(req: NextRequest) {
     const fullFilename = `${safeFilename}.png`
     const filePath = path.join(coversDir, fullFilename)
 
-    // 从环境变量读取服务器 URL，不再硬编码 localhost:3001
-    const host =
-      baseUrl ||
-      process.env.NEXT_PUBLIC_APP_URL ||
-      process.env.APP_URL ||
-      "http://localhost:3000"
-
-    const coverPageUrl = `${host}/cover-render?data=${encodeURIComponent(JSON.stringify(coverData))}`
+    // 始终使用 localhost:3000 内部访问（避免外网延迟和 networkidle 超时）
+    const internalHost = "http://localhost:3000"
+    const coverPageUrl = `${internalHost}/cover-render?data=${encodeURIComponent(JSON.stringify(coverData))}`
 
     // 使用浏览器池（复用已有浏览器实例，只创建新 Page）
     await withBrowserPage(async (page) => {
       await page.setViewport({ width: 375, height: 600, deviceScaleFactor: 2 })
-      await page.goto(coverPageUrl, { waitUntil: "networkidle0", timeout: 30000 })
-      // 等待封面组件渲染完成
-      await page.waitForSelector("#cover-root", { timeout: 10000 })
+      // 使用 load 而非 networkidle0，避免等待外部资源导致超时
+      await page.goto(coverPageUrl, { waitUntil: "load", timeout: 60000 })
+      // 等待封面组件渲染完成（React hydration 需要时间）
+      await page.waitForSelector("#cover-root", { timeout: 15000 })
       // 额外等待字体/图片加载
-      await new Promise((r) => setTimeout(r, 300))
+      await new Promise((r) => setTimeout(r, 800))
 
       // 截取封面区域
       const element = await page.$("#cover-root")

@@ -67,19 +67,7 @@ export default function CoverPreviewModal({ data, customerName, onClose }: Cover
           </div>
         </div>
 
-        {/* 标签区 */}
-        {data.tags && data.tags.length > 0 && (
-          <div className="px-5 py-3 border-t border-[#E8E4DC]">
-            <p className="text-xs text-[#8B7355] mb-2">推荐话题标签：</p>
-            <div className="flex flex-wrap gap-2">
-              {data.tags.map((tag, i) => (
-                <span key={i} className="text-xs bg-[#A8D5C2]/30 text-[#1E4D2B] px-2 py-1 rounded-full border border-[#A8D5C2]">
-                  #{tag}
-                </span>
-              ))}
-            </div>
-          </div>
-        )}
+        {/* 标签区已隐藏 */}
       </div>
     </div>
   )

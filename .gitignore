@@ -33,3 +33,9 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# 生成的封面图（运行时生成，不需要提交）
+/public/covers/
+
+# 上传目录
+/uploads/

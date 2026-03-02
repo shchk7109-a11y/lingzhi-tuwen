@@ -42,14 +42,31 @@ export async function POST(req: NextRequest) {
         )}`
 
         await withBrowserPage(async (page) => {
-          await page.setViewport({ width: 375, height: 600, deviceScaleFactor: 2 })
+          await page.setViewport({ width: 375, height: 800, deviceScaleFactor: 2 })
           await page.goto(coverPageUrl, { waitUntil: "domcontentloaded", timeout: 30000 })
-          // 等待 React hydration 完成并标记 data-ready
-          await page.waitForSelector("#cover-root[data-ready='true']", { timeout: 20000 })
+          // 等待 #cover-root 元素出现
+          await page.waitForSelector("#cover-root", { timeout: 15000 })
+          // 等待图片和字体渲染完成
+          await new Promise((r) => setTimeout(r, 1500))
 
-          const element = await page.$("#cover-root")
-          if (element) {
-            await element.screenshot({ path: filePath as `${string}.png` })
+          // 通过 JS 获取 #cover-root 的精确位置和尺寸
+          const rect = await page.evaluate(() => {
+            const el = document.getElementById("cover-root")
+            if (!el) return null
+            const r = el.getBoundingClientRect()
+            return { x: r.left, y: r.top, width: r.width, height: r.height }
+          })
+
+          if (rect && rect.width > 0 && rect.height > 0) {
+            await page.screenshot({
+              path: filePath as `${string}.png`,
+              clip: {
+                x: rect.x,
+                y: rect.y,
+                width: rect.width,
+                height: rect.height,
+              },
+            })
           } else {
             await page.screenshot({
               path: filePath as `${string}.png`,

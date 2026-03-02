@@ -34,17 +34,37 @@ export async function POST(req: NextRequest) {
     const coverPageUrl = `${internalHost}/cover-render?data=${encodeURIComponent(JSON.stringify(coverData))}`
 
     await withBrowserPage(async (page) => {
-      await page.setViewport({ width: 375, height: 600, deviceScaleFactor: 2 })
-      // 等待 DOM 加载完成（不等 networkidle，避免超时）
+      // 设置视口：封面宽度 375px，高度给足空间让页面完整渲染
+      await page.setViewport({ width: 375, height: 800, deviceScaleFactor: 2 })
       await page.goto(coverPageUrl, { waitUntil: "domcontentloaded", timeout: 30000 })
-      // 等待 cover-render 页面的 React hydration 完成并标记 data-ready
-      // data-ready 是在所有图片加载完成后才设置的，确保截图时内容完整
-      await page.waitForSelector("#cover-root[data-ready='true']", { timeout: 20000 })
 
-      const element = await page.$("#cover-root")
-      if (element) {
-        await element.screenshot({ path: filePath as `${string}.png` })
+      // 等待 #cover-root 元素出现（不管有没有 data-ready）
+      await page.waitForSelector("#cover-root", { timeout: 15000 })
+
+      // 再等待一段时间让图片和字体渲染完成
+      await new Promise((r) => setTimeout(r, 1500))
+
+      // 通过 JS 获取 #cover-root 的精确位置和尺寸
+      const rect = await page.evaluate(() => {
+        const el = document.getElementById("cover-root")
+        if (!el) return null
+        const r = el.getBoundingClientRect()
+        return { x: r.left, y: r.top, width: r.width, height: r.height }
+      })
+
+      if (rect && rect.width > 0 && rect.height > 0) {
+        // 用坐标裁剪截图，精确截取封面区域
+        await page.screenshot({
+          path: filePath as `${string}.png`,
+          clip: {
+            x: rect.x,
+            y: rect.y,
+            width: rect.width,
+            height: rect.height,
+          },
+        })
       } else {
+        // 降级：截取固定区域（375x600，跳过顶部导航栏高度）
         await page.screenshot({
           path: filePath as `${string}.png`,
           clip: { x: 0, y: 0, width: 375, height: 600 },

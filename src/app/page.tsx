@@ -16,6 +16,7 @@ import XhsCoverCardV3, { CoverDataV3 } from "@/components/XhsCoverCardV3"
 import CoverPreviewModal from "@/components/CoverPreviewModal"
 import BatchHistoryModal from "@/components/BatchHistoryModal"
 import { saveBatchToHistory, loadBatchHistory } from "@/lib/batchHistory"
+import { toPng } from "html-to-image"
 
 interface ContentItem {
   text: string
@@ -86,6 +87,8 @@ export default function Home() {
   const currentBatchRef = useRef<ContentItem[]>([])
   const [historyModalOpen, setHistoryModalOpen] = useState(false)
   const [historyCount, setHistoryCount] = useState(0)
+  const coverRenderRef = useRef<HTMLDivElement>(null)
+  const [coverRenderData, setCoverRenderData] = useState<CoverDataV3 | null>(null)
 
   const BATCH_SIZE = platform === 'pyq' ? 20 : 10
 
@@ -243,27 +246,46 @@ export default function Home() {
     currentBatchId: string
   ) => {
     try {
-      const baseUrl = typeof window !== "undefined" ? window.location.origin : "http://localhost:3001"
       const safeName = customerName.replace(/[^a-zA-Z0-9\u4e00-\u9fa5]/g, "_")
-      const filename = `${currentBatchId}_${safeName}_${index + 1}`
-      const res = await fetch("/api/covers/render", {
+      const filename = `${currentBatchId}_${safeName}_${index + 1}.png`
+
+      // 设置要渲染的封面数据，触发隐藏容器渲染
+      setCoverRenderData(coverData)
+
+      // 等待 React 渲染完成（两帧）
+      await new Promise(resolve => setTimeout(resolve, 200))
+
+      if (!coverRenderRef.current) throw new Error("封面容器未就绪")
+
+      // 使用 html-to-image 截图（与 CoverPreviewModal 相同参数）
+      const dataUrl = await toPng(coverRenderRef.current, {
+        width: 375,
+        height: 600,
+        pixelRatio: 3,
+        style: { transform: "scale(1)", transformOrigin: "top left" }
+      })
+
+      // 清除渲染数据
+      setCoverRenderData(null)
+
+      // 上传 base64 到服务器保存
+      const saveRes = await fetch("/api/covers/save-base64", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ coverData, filename, baseUrl })
+        body: JSON.stringify({ base64: dataUrl, filename })
       })
-      if (res.ok) {
-        const data = await res.json()
-        // 将相对路径转换为完整绝对 URL，确保外部系统可以直接访问
-        const relUrl = data.url || ""
-        const origin = typeof window !== "undefined" ? window.location.origin : ""
-        const url = relUrl.startsWith("http") ? relUrl : `${origin}${relUrl}`
+
+      if (saveRes.ok) {
+        const data = await saveRes.json()
+        const url = data.url || ""
         setCurrentBatch(prev => prev.map((c, idx) =>
           idx === index ? { ...c, coverUrl: url, coverRendering: false } : c
         ))
         return url
       }
     } catch (err) {
-      console.error("服务端封面渲染失败:", err)
+      console.error("客户端封面渲染失败:", err)
+      setCoverRenderData(null)
     }
     setCurrentBatch(prev => prev.map((c, idx) =>
       idx === index ? { ...c, coverRendering: false } : c
@@ -998,6 +1020,24 @@ export default function Home() {
         open={historyModalOpen}
         onClose={() => setHistoryModalOpen(false)}
       />
+
+      {/* 隐藏的封面渲染容器（用于 html-to-image 截图） */}
+      <div
+        style={{
+          position: "fixed",
+          left: "-9999px",
+          top: 0,
+          width: 375,
+          height: 600,
+          overflow: "hidden",
+          pointerEvents: "none",
+          zIndex: -1,
+        }}
+      >
+        <div ref={coverRenderRef} style={{ width: 375, height: 600 }}>
+          {coverRenderData && <XhsCoverCardV3 data={coverRenderData} scale={1} />}
+        </div>
+      </div>
     </div>
   )
 }

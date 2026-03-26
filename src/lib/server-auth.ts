@@ -1,9 +1,10 @@
 /**
  * 服务端 API 身份验证工具
- * Token 持久化到数据库 + 内存缓存双重保障
- * 解决数据库写入失败导致 Token 验证失败的问题
+ * 使用 HMAC 签名 Token，无需数据库或内存存储
+ * Token 自身携带过期时间和签名，验证时只需重新计算签名比对
  */
 import { NextRequest, NextResponse } from 'next/server'
+import { createHmac } from 'crypto'
 import { prisma } from './prisma'
 
 /** 管理员 Token 请求头名称 */
@@ -12,58 +13,43 @@ export const ADMIN_TOKEN_HEADER = 'x-admin-token'
 /** Token 有效期：7 天 */
 const TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000
 
-/** Setting 表中存 token 的 key 前缀 */
-const TOKEN_KEY_PREFIX = 'admin_token:'
-
 /**
- * 内存 Token 缓存（作为数据库的 fallback）
- * key: token 字符串, value: 过期时间戳
+ * 获取签名密钥
+ * 优先使用环境变量，否则使用 DATABASE_URL 的哈希值作为密钥
+ * 这样即使没有配置专门的 SECRET，也能有一个稳定的密钥
  */
-const memoryTokenCache = new Map<string, number>()
-
-/**
- * 清理过期的内存 Token
- */
-function cleanExpiredTokens() {
-  const now = Date.now()
-  for (const [token, expireAt] of memoryTokenCache) {
-    if (now > expireAt) {
-      memoryTokenCache.delete(token)
-    }
-  }
+function getSigningKey(): string {
+  if (process.env.ADMIN_TOKEN_SECRET) return process.env.ADMIN_TOKEN_SECRET
+  if (process.env.ADMIN_PASSWORD) return `lingzhi_admin_${process.env.ADMIN_PASSWORD}`
+  // 使用 DATABASE_URL 作为 fallback 密钥源
+  const dbUrl = process.env.DATABASE_URL || 'default-lingzhi-key'
+  return `lingzhi_${createHmac('sha256', 'lingzhi-salt').update(dbUrl).digest('hex').substring(0, 16)}`
 }
 
 /**
- * 颁发一个新的管理员 Token
- * 同时存入数据库和内存缓存，确保至少有一个能用
+ * 对数据进行 HMAC-SHA256 签名
+ */
+function sign(data: string): string {
+  return createHmac('sha256', getSigningKey()).update(data).digest('hex')
+}
+
+/**
+ * 颁发一个新的管理员 Token（自签名，无需存储）
+ * Token 格式: adm_{timestamp}_{random}.{signature}
  */
 export async function issueAdminToken(): Promise<string> {
-  const token = `adm_${Date.now()}_${Math.random().toString(36).slice(2)}`
   const expireAt = Date.now() + TOKEN_TTL_MS
-
-  // 1. 先存入内存缓存（一定成功）
-  memoryTokenCache.set(token, expireAt)
-  cleanExpiredTokens()
-  console.log(`[AUTH] Token issued and cached in memory: ${token.substring(0, 15)}...`)
-
-  // 2. 尝试存入数据库（可能失败）
-  try {
-    await prisma.setting.upsert({
-      where: { key: `${TOKEN_KEY_PREFIX}${token}` },
-      create: { key: `${TOKEN_KEY_PREFIX}${token}`, value: String(expireAt) },
-      update: { value: String(expireAt) },
-    })
-    console.log(`[AUTH] Token also saved to database`)
-  } catch (e) {
-    console.error('[AUTH] Failed to save token to database (will use memory cache):', e)
-  }
-
+  const nonce = Math.random().toString(36).slice(2)
+  const payload = `${expireAt}_${nonce}`
+  const signature = sign(payload)
+  const token = `adm_${payload}.${signature}`
+  console.log(`[AUTH] Token issued: ${token.substring(0, 20)}... (expires: ${new Date(expireAt).toISOString()})`)
   return token
 }
 
 /**
- * 验证 Token 是否有效
- * 先检查内存缓存，再检查数据库
+ * 验证 Token 是否有效（通过重新计算签名比对）
+ * 无需查询数据库或内存
  */
 export async function verifyAdminToken(token: string | null): Promise<boolean> {
   if (!token) {
@@ -71,51 +57,58 @@ export async function verifyAdminToken(token: string | null): Promise<boolean> {
     return false
   }
 
-  // 1. 先检查内存缓存
-  const memoryExpire = memoryTokenCache.get(token)
-  if (memoryExpire) {
-    if (Date.now() <= memoryExpire) {
-      console.log(`[AUTH] Token verified via memory cache: ${token.substring(0, 15)}...`)
-      return true
-    } else {
-      memoryTokenCache.delete(token)
-      console.log(`[AUTH] Token expired in memory cache: ${token.substring(0, 15)}...`)
-    }
-  }
-
-  // 2. 再检查数据库
   try {
-    const record = await prisma.setting.findUnique({
-      where: { key: `${TOKEN_KEY_PREFIX}${token}` },
-    })
-    if (!record) {
-      console.log(`[AUTH] Token not found in database: ${token.substring(0, 15)}...`)
+    // Token 格式: adm_{expireAt}_{nonce}.{signature}
+    if (!token.startsWith('adm_')) {
+      console.log('[AUTH] verifyAdminToken: invalid token format (no adm_ prefix)')
       return false
     }
-    const expireAt = parseInt(record.value, 10)
-    if (Date.now() > expireAt) {
-      await prisma.setting.delete({ where: { key: `${TOKEN_KEY_PREFIX}${token}` } }).catch(() => {})
-      console.log(`[AUTH] Token expired in database: ${token.substring(0, 15)}...`)
+
+    const withoutPrefix = token.substring(4) // 去掉 "adm_"
+    const dotIndex = withoutPrefix.lastIndexOf('.')
+    if (dotIndex === -1) {
+      console.log('[AUTH] verifyAdminToken: invalid token format (no signature)')
       return false
     }
-    // 数据库验证通过，同步到内存缓存
-    memoryTokenCache.set(token, expireAt)
-    console.log(`[AUTH] Token verified via database: ${token.substring(0, 15)}...`)
+
+    const payload = withoutPrefix.substring(0, dotIndex)
+    const signature = withoutPrefix.substring(dotIndex + 1)
+
+    // 验证签名
+    const expectedSignature = sign(payload)
+    if (signature !== expectedSignature) {
+      console.log('[AUTH] verifyAdminToken: signature mismatch')
+      return false
+    }
+
+    // 验证过期时间
+    const parts = payload.split('_')
+    if (parts.length < 2) {
+      console.log('[AUTH] verifyAdminToken: invalid payload format')
+      return false
+    }
+    const expireAt = parseInt(parts[0], 10)
+    if (isNaN(expireAt) || Date.now() > expireAt) {
+      console.log('[AUTH] verifyAdminToken: token expired')
+      return false
+    }
+
+    console.log('[AUTH] verifyAdminToken: valid')
     return true
   } catch (e) {
-    console.error('[AUTH] Database error during token verification:', e)
+    console.error('[AUTH] verifyAdminToken error:', e)
     return false
   }
 }
 
 /**
  * 使 Token 失效（退出登录）
+ * HMAC Token 无法真正"撤销"，但前端会清除存储
+ * 如果需要强制失效，可以更改签名密钥
  */
 export async function revokeAdminToken(token: string): Promise<void> {
-  memoryTokenCache.delete(token)
-  try {
-    await prisma.setting.delete({ where: { key: `${TOKEN_KEY_PREFIX}${token}` } })
-  } catch { /* 忽略不存在的 token */ }
+  // HMAC Token 无需服务端撤销操作
+  console.log('[AUTH] Token revoked (client-side only)')
 }
 
 /**
@@ -125,12 +118,12 @@ export function extractToken(request: NextRequest): string | null {
   const headerToken = request.headers.get(ADMIN_TOKEN_HEADER)
   const cookieToken = request.cookies.get('admin_token')?.value
   const token = headerToken || cookieToken || null
-  console.log(`[AUTH] extractToken: header=${headerToken ? 'yes' : 'no'}, cookie=${cookieToken ? 'yes' : 'no'}, result=${token ? token.substring(0, 15) + '...' : 'null'}`)
+  console.log(`[AUTH] extractToken: header=${headerToken ? 'yes' : 'no'}, cookie=${cookieToken ? 'yes' : 'no'}, result=${token ? 'found' : 'null'}`)
   return token
 }
 
 /**
- * 守卫函数：验证请求是否携带有效的管理员 Token（异步版）
+ * 守卫函数：验证请求是否携带有效的管理员 Token
  * 如果验证失败，返回 401 响应；否则返回 null（表示通过）
  */
 export async function requireAdmin(
@@ -139,7 +132,7 @@ export async function requireAdmin(
   const token = extractToken(request)
   const valid = await verifyAdminToken(token)
   if (!valid) {
-    console.log(`[AUTH] requireAdmin DENIED for token: ${token ? token.substring(0, 15) + '...' : 'null'}`)
+    console.log(`[AUTH] requireAdmin DENIED`)
     return NextResponse.json(
       { error: '未授权，请先登录管理员账户' },
       { status: 401 }

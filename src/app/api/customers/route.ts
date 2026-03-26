@@ -7,12 +7,23 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url)
     const category = searchParams.get('category')
     const search = searchParams.get('search')
+    const platform = searchParams.get('platform')
+    const status = searchParams.get('status')
     const page = parseInt(searchParams.get('page') || '1')
     const pageSize = parseInt(searchParams.get('pageSize') || '20')
 
-    const where: any = { status: 'active' }
+    const where: any = {}
+    // 默认只查 active，除非明确传了 status 参数
+    if (status) {
+      where.status = status
+    } else {
+      where.status = 'active'
+    }
     if (category && category !== 'all') {
       where.category = category
+    }
+    if (platform) {
+      where.platform = platform
     }
     if (search) {
       where.OR = [
@@ -22,6 +33,7 @@ export async function GET(request: NextRequest) {
         { city: { contains: search } },
         { xhsAccount: { contains: search } },
         { wechatId: { contains: search } },
+        { personaName: { contains: search } },
       ]
     }
 
@@ -47,14 +59,43 @@ export async function POST(request: NextRequest) {
   if (authError) return authError
   try {
     const body = await request.json()
-    const { name, nickname, gender, age, occupation, city, income, category, lifestyle, painPoints, needs, scenes, language, xhsAccount, wechatId } = body
+    const { name, nickname, gender, age, occupation, city, income, category, lifestyle, painPoints, needs, scenes, language, xhsAccount, wechatId, accountId, platform, personaName, personaDesc, targetAudience, tier3Eligible } = body
     if (!name) return NextResponse.json({ error: 'Name is required' }, { status: 400 })
 
-    const customer = await prisma.customer.create({
-      data: { name, nickname, gender, age: age ? parseInt(age) : null, occupation, city, income, category: category || '职场精英型', lifestyle, painPoints, needs, scenes, language, xhsAccount, wechatId },
+    // 使用事务创建客户并自动初始化 5 张子表
+    const customer = await prisma.$transaction(async (tx) => {
+      const c = await tx.customer.create({
+        data: {
+          name, nickname, gender, age: age ? parseInt(age) : null,
+          occupation, city, income, category: category || '职场精英型',
+          lifestyle, painPoints, needs, scenes, language, xhsAccount, wechatId,
+          accountId, platform, personaName, personaDesc, targetAudience, tier3Eligible,
+        },
+      })
+
+      await Promise.all([
+        tx.publishHabit.create({ data: { customerId: c.id } }),
+        tx.contentPreference.create({ data: { customerId: c.id } }),
+        tx.writingStyle.create({ data: { customerId: c.id } }),
+        tx.trendTracking.create({ data: { customerId: c.id } }),
+        tx.performanceMetric.create({ data: { customerId: c.id } }),
+      ])
+
+      return tx.customer.findUnique({
+        where: { id: c.id },
+        include: {
+          publishHabit: true,
+          contentPreference: true,
+          writingStyle: true,
+          trendTracking: true,
+          performanceMetric: true,
+        },
+      })
     })
+
     return NextResponse.json(customer)
   } catch (error) {
+    console.error('Customer POST error:', error)
     return NextResponse.json({ error: 'Failed to create customer' }, { status: 500 })
   }
 }

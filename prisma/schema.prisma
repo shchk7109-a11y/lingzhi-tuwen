@@ -4,7 +4,7 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
@@ -30,6 +30,22 @@ model Customer {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   contents    Content[]
+
+  // === Sprint 1 新增字段 ===
+  accountId       String?
+  platform        String?   @default("xiaohongshu")
+  personaName     String?
+  personaDesc     String?
+  targetAudience  String?
+  tier3Eligible   Boolean   @default(false)
+
+  // === Sprint 1 新增关联 ===
+  publishHabit       PublishHabit?
+  contentPreference  ContentPreference?
+  writingStyle       WritingStyle?
+  trendTracking      TrendTracking?
+  performanceMetric  PerformanceMetric?
+  contentHistories   ContentHistory[]
 }
 
 model Material {
@@ -45,6 +61,19 @@ model Material {
   isProduct   Boolean  @default(false)
   status      String   @default("active")
   createdAt   DateTime @default(now())
+
+  // === Sprint 1 新增字段 ===
+  updatedAt      DateTime  @updatedAt @default(now())
+  sourceType     String    @default("manual")
+  styleTags      Json?
+  tierLevel      Int       @default(1)
+  weeklyRefCount Int       @default(0)
+  dailyRefCount  Int       @default(0)
+  maxDailyRef    Int       @default(8)
+  expiresAt      DateTime?
+  colorTone      String?
+  season         String?
+  category       String?
 }
 
 model Prompt {
@@ -88,4 +117,99 @@ model Content {
   status          String   @default("pending")
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
+}
+
+// === Sprint 1 新增模型 ===
+
+model PublishHabit {
+  id                 String   @id @default(uuid())
+  customerId         String   @unique
+  customer           Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  preferredTimeSlots Json?
+  dailyPostCount     Int      @default(3)
+  imageTextRatio     Float    @default(0.7)
+  contentLengthPref  String   @default("medium")
+  hashtagStyle       String   @default("mixed")
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+}
+
+model ContentPreference {
+  id                     String   @id @default(uuid())
+  customerId             String   @unique
+  customer               Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  preferredConstitutions Json?
+  preferredProducts      Json?
+  topicTags              Json?
+  avoidTopics            Json?
+  seasonalFocus          Boolean  @default(true)
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+}
+
+model WritingStyle {
+  id               String   @id @default(uuid())
+  customerId       String   @unique
+  customer         Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  tone             String   @default("warm")
+  catchphrases     Json?
+  sentencePatterns Json?
+  styleSamples     Json?
+  emojiFrequency   String   @default("medium")
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}
+
+model TrendTracking {
+  id               String   @id @default(uuid())
+  customerId       String   @unique
+  customer         Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  industryKeywords Json?
+  seasonalTopics   Json?
+  trendingResponse String   @default("moderate")
+  externalFeeds    Json?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}
+
+model PerformanceMetric {
+  id               String    @id @default(uuid())
+  customerId       String    @unique
+  customer         Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  avgLikeRate      Float     @default(0)
+  avgCommentRate   Float     @default(0)
+  avgShareRate     Float     @default(0)
+  bestContentTypes Json?
+  bestPostTimes    Json?
+  totalPosts       Int       @default(0)
+  viralCount       Int       @default(0)
+  lastCalculated   DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+}
+
+model ContentHistory {
+  id                String    @id @default(uuid())
+  customerId        String
+  customer          Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  originalCopyId    String?
+  cleanedCopy       String?   @db.Text
+  imageUrls         Json?
+  visualFingerprint Json?
+  platform          String
+  contentType       String
+  productIds        Json?
+  scheduledTime     DateTime?
+  publishedAt       DateTime?
+  status            String    @default("pending")
+  hashtags          Json?
+  engagement        Json?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@index([customerId])
+  @@index([platform])
+  @@index([contentType])
+  @@index([status])
+  @@index([publishedAt])
 }

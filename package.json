@@ -4,7 +4,10 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "prisma generate && prisma db push --skip-generate && next build",
+    "postinstall": "prisma generate",
+    "db:push": "prisma db push",
+    "db:init-profiles": "tsx scripts/init-customer-profiles.ts",
     "start": "next start",
     "lint": "next lint"
   },

@@ -5,9 +5,11 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Input } from "@/components/ui/input"
 import { Settings, Key, Lock, CheckCircle, AlertCircle, Eye, EyeOff } from "lucide-react"
 import { toast } from "sonner"
+import { useAuth } from "@/lib/auth-context"
 import type { AIModel } from "@/lib/ai-client"
 
 export default function SettingsPage() {
+  const { authHeaders } = useAuth()
   const [apiKey, setApiKeyInput] = useState("")
   const [model, setModel] = useState<AIModel>("deepseek")
   const [hasApiKey, setHasApiKey] = useState(false)
@@ -48,7 +50,7 @@ export default function SettingsPage() {
     try {
       const res = await fetch("/api/settings", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify({ apiKey: apiKey.trim(), model }),
       })
       const data = await res.json()
@@ -71,7 +73,7 @@ export default function SettingsPage() {
     try {
       const res = await fetch("/api/settings", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify({ model: newModel }),
       })
       if (!res.ok) throw new Error()
@@ -93,7 +95,7 @@ export default function SettingsPage() {
     try {
       const res = await fetch("/api/settings", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify({ adminPassword: currentPassword, newAdminPassword: newPassword }),
       })
       const data = await res.json()
@@ -270,7 +272,7 @@ export default function SettingsPage() {
           <p>1. API Key 保存后存储在数据库中，重启服务器不会丢失</p>
           <p>2. 支持 DeepSeek / Kimi / Gemini（谷高中转）三种模型</p>
           <p>3. 点击模型按钮即自动保存，无需额外操作</p>
-          <p>4. 默认管理员密码：<code className="bg-gray-100 px-1 rounded font-mono">lingzhi2024</code></p>
+          <p>4. 默认管理员密码：<code className="bg-gray-100 px-1 rounded font-mono">changeme</code></p>
           <p>5. 管理员密码用于访问客户管理、素材库、提示词等管理功能</p>
         </CardContent>
       </Card>

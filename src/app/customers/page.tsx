@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
+import { useAuth } from '@/lib/auth-context'
 
 interface Customer {
   id: string
@@ -39,6 +40,7 @@ const emptyForm = {
 }
 
 export default function CustomersPage() {
+  const { authHeaders } = useAuth()
   const [customers, setCustomers] = useState<Customer[]>([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(false)
@@ -128,7 +130,7 @@ export default function CustomersPage() {
       const body = editingCustomer ? { ...form, id: editingCustomer.id } : form
       const res = await fetch('/api/customers', {
         method,
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
         body: JSON.stringify(body),
       })
       if (res.ok) {
@@ -142,7 +144,7 @@ export default function CustomersPage() {
 
   const handleDelete = async (id: string, name: string) => {
     if (!confirm(`确认删除客户「${name}」？此操作不可恢复。`)) return
-    const res = await fetch(`/api/customers?id=${id}`, { method: 'DELETE' })
+    const res = await fetch(`/api/customers?id=${id}`, { method: 'DELETE', headers: authHeaders() })
     if (res.ok) fetchCustomers()
   }
 

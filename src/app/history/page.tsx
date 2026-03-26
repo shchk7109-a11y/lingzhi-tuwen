@@ -106,7 +106,7 @@ export default function HistoryPage() {
     try {
       const res = await fetch("/api/contents", {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify({ id: selectedRecord.id, cleanedText: editingText }),
       })
       if (res.ok) {

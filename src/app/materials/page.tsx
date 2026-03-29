@@ -3,6 +3,67 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useAuth } from '@/lib/auth-context'
 
+// === AI 智能上传相关类型 ===
+interface AutoTagResult {
+  product: string | null
+  productLine: string
+  assetType: string
+  contentTypes: string[]
+  platform: string[]
+  description: string
+  confidence: number
+  source: 'photo' | 'ai_generated' | 'upload'
+}
+
+interface StagedFile {
+  file: File
+  preview: string          // URL.createObjectURL
+  fileName: string
+  tags: AutoTagResult | null
+  editing: boolean         // 是否正在编辑
+  confirmed: boolean       // 是否已确认
+}
+
+// 所有场景类型（含品牌级）
+const ALL_SCENE_TYPES = [
+  '产品图', '场景图', '冲泡图', '配方图', '包装图',
+  '店铺场景', '店员操作', '培训孵化', '品牌宣传', '未分类',
+]
+
+// 平台选项
+const PLATFORM_OPTIONS = [
+  { key: 'both', label: '通用' },
+  { key: 'xhs_cover', label: '小红书封面' },
+  { key: 'xhs_content', label: '小红书内图' },
+  { key: 'wechat', label: '朋友圈' },
+]
+
+// 内容类型选项
+const CONTENT_TYPE_OPTIONS = [
+  { key: 'product_recommend', label: '产品推荐' },
+  { key: 'constitution_edu', label: '体质科普' },
+  { key: 'solar_term', label: '节气养生' },
+  { key: 'ingredient_analysis', label: '成分解读' },
+  { key: 'customer_testimony', label: '客户见证' },
+  { key: 'transformation', label: '转型故事' },
+  { key: 'project_visit', label: '项目考察' },
+]
+
+// 所有产品名称（扁平列表）
+const ALL_PRODUCT_NAMES = [
+  '补气焕活草本茶饮', '湿祛轻畅草本定制茶饮', '红颜透润草本定制茶饮', '清脂纤纤草本定制茶饮',
+  '悦活草本美式', '悦纤草本美式', '悦轻草本美式', '悦颜草本美式',
+  '通用', '店铺场景', '品牌宣传', '节日活动',
+]
+
+// 根据产品名推断产品线
+function inferProductLine(productName: string | null): string {
+  if (!productName) return '品牌通用'
+  if (['补气焕活草本茶饮', '湿祛轻畅草本定制茶饮', '红颜透润草本定制茶饮', '清脂纤纤草本定制茶饮'].includes(productName)) return '草本茶饮'
+  if (['悦活草本美式', '悦纤草本美式', '悦轻草本美式', '悦颜草本美式'].includes(productName)) return '草本咖啡'
+  return '品牌通用'
+}
+
 interface Material {
   id: string
   filename: string
@@ -273,6 +334,452 @@ function TagEditModal({
   )
 }
 
+// === AI 审核界面：单张图片标签编辑卡片 ===
+function ReviewCard({
+  item,
+  onUpdate,
+  onRemove,
+}: {
+  item: StagedFile
+  onUpdate: (updated: Partial<AutoTagResult>) => void
+  onRemove: () => void
+}) {
+  const tags = item.tags!
+  const confidenceColor = tags.confidence > 0.8 ? 'text-green-600 bg-green-50 border-green-200'
+    : tags.confidence > 0.5 ? 'text-amber-600 bg-amber-50 border-amber-200'
+    : 'text-red-600 bg-red-50 border-red-200'
+  const isUnclassified = tags.assetType === '未分类'
+
+  return (
+    <div className={`bg-white rounded-xl border-2 p-3 transition-all ${
+      isUnclassified ? 'border-red-300 shadow-red-100 shadow-md' : item.confirmed ? 'border-green-300' : 'border-gray-200'
+    }`}>
+      {/* 缩略图 + 文件名 */}
+      <div className="flex gap-3 mb-3">
+        <div className="w-20 h-20 rounded-lg overflow-hidden bg-gray-100 flex-shrink-0">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={item.preview} alt={item.fileName} className="w-full h-full object-cover" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className="text-xs text-gray-500 truncate mb-1" title={item.fileName}>{item.fileName}</p>
+          <span className={`inline-block px-2 py-0.5 rounded-full text-xs border font-medium ${confidenceColor}`}>
+            置信度 {Math.round(tags.confidence * 100)}%
+          </span>
+          {isUnclassified && (
+            <span className="inline-block ml-1 px-2 py-0.5 rounded-full text-xs bg-red-100 text-red-600 font-medium">
+              需手动分类
+            </span>
+          )}
+          <p className="text-xs text-gray-400 mt-1 line-clamp-2">{tags.description}</p>
+        </div>
+        <button onClick={onRemove} className="text-gray-300 hover:text-red-400 self-start text-lg" title="移除">×</button>
+      </div>
+
+      {/* 标签编辑区 */}
+      <div className="space-y-2">
+        {/* 产品 */}
+        <div className="flex items-center gap-2">
+          <label className="text-xs text-gray-500 w-10 flex-shrink-0">产品</label>
+          <select
+            value={tags.product || ''}
+            onChange={e => {
+              const product = e.target.value || null
+              const productLine = inferProductLine(product)
+              const productName = product || '通用'
+              onUpdate({ product, productLine })
+            }}
+            className="flex-1 px-2 py-1 border border-gray-200 rounded-lg text-xs focus:outline-none focus:ring-1 focus:ring-green-400"
+          >
+            <option value="">无（品牌级素材）</option>
+            <optgroup label="草本茶饮">
+              <option value="补气焕活草本茶饮">补气焕活草本茶饮</option>
+              <option value="湿祛轻畅草本定制茶饮">湿祛轻畅草本定制茶饮</option>
+              <option value="红颜透润草本定制茶饮">红颜透润草本定制茶饮</option>
+              <option value="清脂纤纤草本定制茶饮">清脂纤纤草本定制茶饮</option>
+            </optgroup>
+            <optgroup label="草本咖啡">
+              <option value="悦活草本美式">悦活草本美式</option>
+              <option value="悦纤草本美式">悦纤草本美式</option>
+              <option value="悦轻草本美式">悦轻草本美式</option>
+              <option value="悦颜草本美式">悦颜草本美式</option>
+            </optgroup>
+          </select>
+        </div>
+
+        {/* 类型 */}
+        <div className="flex items-center gap-2">
+          <label className="text-xs text-gray-500 w-10 flex-shrink-0">类型</label>
+          <select
+            value={tags.assetType}
+            onChange={e => onUpdate({ assetType: e.target.value })}
+            className={`flex-1 px-2 py-1 border rounded-lg text-xs focus:outline-none focus:ring-1 focus:ring-green-400 ${
+              isUnclassified ? 'border-red-300 bg-red-50' : 'border-gray-200'
+            }`}
+          >
+            {ALL_SCENE_TYPES.map(t => (
+              <option key={t} value={t}>{t}</option>
+            ))}
+          </select>
+        </div>
+
+        {/* 平台 */}
+        <div className="flex items-center gap-2">
+          <label className="text-xs text-gray-500 w-10 flex-shrink-0">平台</label>
+          <div className="flex flex-wrap gap-1">
+            {PLATFORM_OPTIONS.map(opt => (
+              <button
+                key={opt.key}
+                type="button"
+                onClick={() => {
+                  const current = tags.platform
+                  const next = current.includes(opt.key)
+                    ? current.filter(k => k !== opt.key)
+                    : [...current, opt.key]
+                  onUpdate({ platform: next.length ? next : ['both'] })
+                }}
+                className={`px-2 py-0.5 text-xs rounded-full border transition-all ${
+                  tags.platform.includes(opt.key)
+                    ? 'bg-blue-600 text-white border-blue-600'
+                    : 'bg-white text-gray-500 border-gray-200 hover:border-blue-300'
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* 来源 */}
+        <div className="flex items-center gap-2">
+          <label className="text-xs text-gray-500 w-10 flex-shrink-0">来源</label>
+          <div className="flex gap-2">
+            {([['photo', '实拍'], ['ai_generated', 'AI生成'], ['upload', '设计稿']] as const).map(([val, label]) => (
+              <label key={val} className="flex items-center gap-1 text-xs text-gray-600 cursor-pointer">
+                <input
+                  type="radio"
+                  name={`source-${item.fileName}`}
+                  checked={tags.source === val}
+                  onChange={() => onUpdate({ source: val })}
+                  className="w-3 h-3 text-green-600"
+                />
+                {label}
+              </label>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// === 智能上传面板 ===
+function SmartUploadPanel({
+  isAdmin,
+  authHeaders,
+  onComplete,
+}: {
+  isAdmin: boolean
+  authHeaders: () => Record<string, string>
+  onComplete: () => void
+}) {
+  const [staged, setStaged] = useState<StagedFile[]>([])
+  const [analyzing, setAnalyzing] = useState(false)
+  const [analyzeProgress, setAnalyzeProgress] = useState({ current: 0, total: 0 })
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  const [dragOver, setDragOver] = useState(false)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  // 清理 preview URLs
+  useEffect(() => {
+    return () => { staged.forEach(s => URL.revokeObjectURL(s.preview)) }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const addFiles = (files: FileList) => {
+    const newItems: StagedFile[] = Array.from(files)
+      .filter(f => f.type.startsWith('image/'))
+      .map(f => ({
+        file: f,
+        preview: URL.createObjectURL(f),
+        fileName: f.name,
+        tags: null,
+        editing: false,
+        confirmed: false,
+      }))
+    setStaged(prev => [...prev, ...newItems])
+    setError('')
+  }
+
+  const removeFile = (idx: number) => {
+    setStaged(prev => {
+      URL.revokeObjectURL(prev[idx].preview)
+      return prev.filter((_, i) => i !== idx)
+    })
+  }
+
+  const updateTags = (idx: number, updates: Partial<AutoTagResult>) => {
+    setStaged(prev => prev.map((item, i) => {
+      if (i !== idx || !item.tags) return item
+      return { ...item, tags: { ...item.tags, ...updates } }
+    }))
+  }
+
+  // 读取文件为 base64
+  const fileToBase64 = (file: File): Promise<string> =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => {
+        const result = reader.result as string
+        resolve(result.split(',')[1]) // 去掉 data:xxx;base64, 前缀
+      }
+      reader.onerror = reject
+      reader.readAsDataURL(file)
+    })
+
+  // AI 分析
+  const runAnalysis = async () => {
+    const unanalyzed = staged.filter(s => !s.tags)
+    if (unanalyzed.length === 0) return
+
+    setAnalyzing(true)
+    setError('')
+    setAnalyzeProgress({ current: 0, total: unanalyzed.length })
+
+    try {
+      // 逐批发送（每批最多 5 张，避免请求体过大）
+      const batchSize = 5
+      for (let batchStart = 0; batchStart < unanalyzed.length; batchStart += batchSize) {
+        const batch = unanalyzed.slice(batchStart, batchStart + batchSize)
+        const images = await Promise.all(
+          batch.map(async (s) => ({
+            fileName: s.fileName,
+            base64: await fileToBase64(s.file),
+            mimeType: s.file.type,
+          }))
+        )
+
+        const res = await fetch('/api/materials-lib/auto-tag', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...authHeaders() },
+          body: JSON.stringify({ images }),
+        })
+
+        if (!res.ok) {
+          const d = await res.json().catch(() => ({}))
+          throw new Error(d.error || `分析失败: ${res.status}`)
+        }
+
+        const data = await res.json()
+        const results: Array<{ fileName: string; tags: AutoTagResult }> = data.results
+
+        // 更新 staged 中对应的项
+        setStaged(prev => prev.map(item => {
+          const match = results.find(r => r.fileName === item.fileName)
+          if (match) return { ...item, tags: match.tags }
+          return item
+        }))
+
+        setAnalyzeProgress({ current: Math.min(batchStart + batchSize, unanalyzed.length), total: unanalyzed.length })
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '分析失败')
+    } finally {
+      setAnalyzing(false)
+    }
+  }
+
+  // 批量确认入库
+  const handleBatchSave = async () => {
+    const toSave = staged.filter(s => s.tags && s.tags.assetType !== '未分类')
+    if (toSave.length === 0) {
+      setError('没有可入库的素材（未分类素材需先手动标注类型）')
+      return
+    }
+
+    setSaving(true)
+    setError('')
+
+    try {
+      const formData = new FormData()
+
+      const metadata = toSave.map(s => ({
+        fileName: s.file.name,
+        productLine: s.tags!.productLine,
+        productName: s.tags!.product || '通用',
+        sceneType: s.tags!.assetType,
+        tags: [
+          ...s.tags!.contentTypes,
+          ...s.tags!.platform.filter(p => p !== 'both'),
+          s.tags!.description,
+        ].filter(Boolean).join(','),
+        source: s.tags!.source,
+      }))
+
+      formData.append('metadata', JSON.stringify(metadata))
+      toSave.forEach(s => formData.append('files', s.file))
+
+      const res = await fetch('/api/materials-lib/batch-save', {
+        method: 'POST',
+        headers: authHeaders(),
+        body: formData,
+      })
+
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}))
+        throw new Error(d.error || '保存失败')
+      }
+
+      const data = await res.json()
+      alert(data.message || '保存成功')
+
+      // 清理已保存的
+      const savedNames = new Set(toSave.map(s => s.fileName))
+      setStaged(prev => {
+        prev.filter(s => savedNames.has(s.fileName)).forEach(s => URL.revokeObjectURL(s.preview))
+        return prev.filter(s => !savedNames.has(s.fileName))
+      })
+
+      onComplete()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '保存失败')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const analyzedCount = staged.filter(s => s.tags).length
+  const unclassifiedCount = staged.filter(s => s.tags?.assetType === '未分类').length
+  const savableCount = staged.filter(s => s.tags && s.tags.assetType !== '未分类').length
+
+  return (
+    <div className="space-y-4">
+      {/* 拖拽上传区 */}
+      <div
+        className={`border-2 border-dashed rounded-xl p-6 text-center transition-all cursor-pointer ${
+          dragOver ? 'border-blue-400 bg-blue-50' : 'border-gray-200 hover:border-blue-300'
+        } ${!isAdmin ? 'opacity-60 cursor-not-allowed' : ''}`}
+        onDragOver={e => { e.preventDefault(); if (isAdmin) setDragOver(true) }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={e => { e.preventDefault(); setDragOver(false); if (isAdmin) addFiles(e.dataTransfer.files) }}
+        onClick={() => isAdmin && inputRef.current?.click()}
+      >
+        <div className="text-3xl mb-2">🤖</div>
+        <p className="text-sm text-gray-600 font-medium">拖入图片，AI 自动打标签</p>
+        <p className="text-xs text-gray-400 mt-1">支持 PNG / JPG / WebP，可多选（最多20张/批）</p>
+        <input
+          ref={inputRef}
+          type="file"
+          accept="image/*"
+          multiple
+          className="hidden"
+          onChange={e => e.target.files && addFiles(e.target.files)}
+        />
+      </div>
+
+      {/* 已选文件列表 + AI 分析按钮 */}
+      {staged.length > 0 && (
+        <>
+          <div className="flex items-center justify-between">
+            <span className="text-sm text-gray-600">
+              已选 <b>{staged.length}</b> 张
+              {analyzedCount > 0 && <span className="text-green-600">，已分析 {analyzedCount}</span>}
+              {unclassifiedCount > 0 && <span className="text-red-500">，未分类 {unclassifiedCount}</span>}
+            </span>
+            <div className="flex gap-2">
+              <button
+                onClick={() => { staged.forEach(s => URL.revokeObjectURL(s.preview)); setStaged([]) }}
+                className="px-3 py-1.5 text-xs text-gray-500 border border-gray-200 rounded-lg hover:bg-gray-50"
+              >
+                清空
+              </button>
+              {staged.some(s => !s.tags) && (
+                <button
+                  onClick={runAnalysis}
+                  disabled={analyzing || !isAdmin}
+                  className="px-4 py-1.5 text-xs text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-50 font-medium"
+                >
+                  {analyzing ? `分析中 ${analyzeProgress.current}/${analyzeProgress.total}...` : '🤖 AI 分析标签'}
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* 分析进度条 */}
+          {analyzing && (
+            <div className="w-full bg-gray-100 rounded-full h-2">
+              <div
+                className="bg-blue-500 h-2 rounded-full transition-all duration-300"
+                style={{ width: `${analyzeProgress.total ? (analyzeProgress.current / analyzeProgress.total) * 100 : 0}%` }}
+              />
+            </div>
+          )}
+
+          {/* 审核网格 */}
+          {analyzedCount > 0 && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {staged.filter(s => s.tags).map((item, idx) => {
+                const realIdx = staged.indexOf(item)
+                return (
+                  <ReviewCard
+                    key={item.fileName}
+                    item={item}
+                    onUpdate={updates => updateTags(realIdx, updates)}
+                    onRemove={() => removeFile(realIdx)}
+                  />
+                )
+              })}
+            </div>
+          )}
+
+          {/* 未分析的缩略图预览 */}
+          {staged.some(s => !s.tags) && (
+            <div className="flex flex-wrap gap-2">
+              {staged.filter(s => !s.tags).map((item, i) => (
+                <div key={item.fileName} className="w-16 h-16 rounded-lg overflow-hidden bg-gray-100 border border-gray-200 relative group">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={item.preview} alt={item.fileName} className="w-full h-full object-cover" />
+                  <button
+                    onClick={() => removeFile(staged.indexOf(item))}
+                    className="absolute top-0 right-0 bg-black/50 text-white text-xs w-4 h-4 flex items-center justify-center rounded-bl opacity-0 group-hover:opacity-100"
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* 批量入库按钮 */}
+          {analyzedCount > 0 && (
+            <div className="flex items-center justify-between bg-gray-50 rounded-xl px-4 py-3">
+              <span className="text-sm text-gray-600">
+                {savableCount > 0
+                  ? `${savableCount} 张可入库`
+                  : '所有素材都未分类，请先标注类型'
+                }
+                {unclassifiedCount > 0 && (
+                  <span className="text-red-500 text-xs ml-2">({unclassifiedCount} 张未分类需手动标注)</span>
+                )}
+              </span>
+              <button
+                onClick={handleBatchSave}
+                disabled={saving || savableCount === 0}
+                className="px-5 py-2 text-sm text-white bg-green-600 rounded-lg hover:bg-green-700 disabled:opacity-50 font-medium"
+              >
+                {saving ? '入库中...' : `确认入库 (${savableCount}张)`}
+              </button>
+            </div>
+          )}
+        </>
+      )}
+
+      {error && (
+        <p className="text-xs text-red-500 bg-red-50 px-3 py-2 rounded-lg">{error}</p>
+      )}
+    </div>
+  )
+}
+
 export default function MaterialsPage() {
   const { isAdmin, authHeaders } = useAuth()
   const [materials, setMaterials] = useState<Material[]>([])
@@ -284,6 +791,7 @@ export default function MaterialsPage() {
   const [editTagTarget, setEditTagTarget] = useState<Material | null>(null)
   const [uploading, setUploading] = useState(false)
   const [uploadError, setUploadError] = useState('')
+  const [uploadMode, setUploadMode] = useState<'smart' | 'manual'>('smart')
   const [uploadForm, setUploadForm] = useState({
     productLine: '草本茶饮',
     productName: '补气焕活草本茶饮',
@@ -438,14 +946,47 @@ export default function MaterialsPage() {
           {/* 左侧：上传面板 */}
           <div className="lg:col-span-1 space-y-4">
             <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4">
-              <h2 className="font-bold text-gray-800 mb-4 flex items-center gap-2">
-                <span className="text-lg">📤</span> 上传新素材
-                {!isAdmin && (
-                  <span className="ml-auto text-xs text-amber-500 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200">
-                    需登录
-                  </span>
-                )}
-              </h2>
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="font-bold text-gray-800 flex items-center gap-2">
+                  <span className="text-lg">{uploadMode === 'smart' ? '🤖' : '📤'}</span>
+                  {uploadMode === 'smart' ? '智能上传' : '手动上传'}
+                  {!isAdmin && (
+                    <span className="ml-2 text-xs text-amber-500 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200">
+                      需登录
+                    </span>
+                  )}
+                </h2>
+                <div className="flex bg-gray-100 rounded-lg p-0.5">
+                  <button
+                    onClick={() => setUploadMode('smart')}
+                    className={`px-2.5 py-1 text-xs rounded-md transition-all ${
+                      uploadMode === 'smart' ? 'bg-blue-600 text-white shadow-sm' : 'text-gray-500 hover:text-gray-700'
+                    }`}
+                  >
+                    AI打标
+                  </button>
+                  <button
+                    onClick={() => setUploadMode('manual')}
+                    className={`px-2.5 py-1 text-xs rounded-md transition-all ${
+                      uploadMode === 'manual' ? 'bg-green-600 text-white shadow-sm' : 'text-gray-500 hover:text-gray-700'
+                    }`}
+                  >
+                    手动
+                  </button>
+                </div>
+              </div>
+
+              {/* 智能上传模式 */}
+              {uploadMode === 'smart' && (
+                <SmartUploadPanel
+                  isAdmin={isAdmin}
+                  authHeaders={authHeaders}
+                  onComplete={fetchMaterials}
+                />
+              )}
+
+              {/* 手动上传模式 */}
+              {uploadMode === 'manual' && (
               <form onSubmit={handleUpload} className="space-y-3">
                 <div>
                   <label className="block text-xs font-medium text-gray-600 mb-1">产品线</label>
@@ -534,6 +1075,7 @@ export default function MaterialsPage() {
                   {uploading ? '上传中...' : !isAdmin ? '请先登录' : '确认上传'}
                 </button>
               </form>
+              )}
             </div>
 
             {/* 使用说明 */}
